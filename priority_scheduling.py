@@ -1,11 +1,11 @@
+import queue
 import random
 import threading
 import typing
-import queue
 from enum import Enum
-from overrides import overrides  # 导入overrides装饰器
 
 import simpy
+from overrides import overrides
 
 # the min value of R in actual processing time model
 R_RANDOM_MIN = 0.1
@@ -13,7 +13,7 @@ R_RANDOM_MIN = 0.1
 R_RANDOM_MAX = 0.7
 
 
-# TODO: 查一下gpu python 的优先级队列怎么用
+# TODO: 查一下gpt  python 的优先级队列怎么用
 
 
 class Priority(Enum):
@@ -41,7 +41,7 @@ machine_generate_lock: threading.Lock = threading.Lock()
 
 def _generate_machine_resource(env: simpy.Environment, num_machine: int = 1) -> bool:
     global machine_resource
-    if machine_resource is None:
+    if machine_resource is not None:
         return False
     with machine_generate_lock:
         machine_resource = MachineResource(env=env, num_machine=num_machine)
@@ -102,7 +102,7 @@ class PriorityBlockingQueue(queue.PriorityQueue):
             while self.empty():
                 self.condition.wait()
             _, item = super().get()
-            return item
+            return item if not isinstance(item, tuple) else item[1]
 
 
 process_schedule_blocked_queue: PriorityBlockingQueue[Process] = PriorityBlockingQueue()
@@ -190,30 +190,6 @@ def __check_is_remaining_process(hierarchical_processes: typing.List[typing.List
     return False
 
 
-def _pop_process(hierarchical_processes: typing.List[typing.List[Process]]):
-    # record the time when submit previous process
-    pre_arrive_time: int = 0
-    while __check_is_remaining_process(hierarchical_processes):
-        # pop the miniOne
-        process_list_with_recent_process = hierarchical_processes[0]
-        for process_list in hierarchical_processes:
-            if (process_list[0].arrival_time < process_list_with_recent_process[0].arrival_time):
-                process_list_with_recent_process = process_list
-        most_recent_proces = process_list_with_recent_process.pop()
-        # use pysim to add the process into system
-        yield env.timeout(most_recent_proces.arrival_time - pre_arrive_time)
-        pre_arrive_time = most_recent_proces.arrival_time
-        # TODO: implement a function to process
-        submit_process: typing.Union[None, Process] = None
-        with lock:
-            process_schedule_blocked_queue.put(item=(most_recent_proces.get_sort_key(), most_recent_proces))
-            # send a message to process task fetch the head
-            # with machine_resource.resource.request():
-            submit_process = process_schedule_blocked_queue.get()
-        if submit_process is not None:
-            __allocate_process_task(process=submit_process)
-
-
 def ___execute_process_mock(process: Process) -> typing.Generator:
     actual_process_time = _compute_actual_processing_time(expected_time=process.service_time)
     print(f"actual_process_time {actual_process_time}: Process {process.name} with priority {process.priority.value}")
@@ -226,7 +202,6 @@ def __allocate_process_task(process: Process) -> typing.Generator:
         print(f"Time {machine_resource.env.now}: Process {process.name} with priority {process.priority.value} starts")
         yield machine_resource.env.process(___execute_process_mock(process=process))
         print(f"Time {machine_resource.env.now}: Process {process.name} with priority {process.priority.value} starts")
-
 
 
 def __generate_random_r() -> float:
@@ -255,13 +230,45 @@ def _compute_actual_processing_time(expected_time: float, r: float = None) -> fl
 # def _process_input() -> typing.Tuple(int, int, int):
 
 
-if __name__ == '__main__':
+def pop_process(hierarchical_processes: typing.List[typing.List[Process]]):
+    print(f"enter into pop process func")
+    # record the time when submit previous process
+    pre_arrive_time: int = 0
+    while __check_is_remaining_process(hierarchical_processes):
+        # pop the miniOne
+        process_list_with_recent_process = hierarchical_processes[0]
+        for process_list in hierarchical_processes:
+            if (process_list is not None
+                    and len(process_list) > 0
+                    and process_list[0].arrival_time < process_list_with_recent_process[0].arrival_time):
+                process_list_with_recent_process = process_list
+        most_recent_process = process_list_with_recent_process.pop(0)
+        print(f"most_recent_process:{most_recent_process.__dict__}")
+        # use pysim to add the process into system
+        yield machine_resource.env.timeout(most_recent_process.arrival_time - pre_arrive_time)
+        pre_arrive_time = most_recent_process.arrival_time
+        # TODO: implement a function to process
+        submit_process: typing.Union[None, Process] = None
+        with lock:
+            process_schedule_blocked_queue.put(item=(most_recent_process.get_sort_key(), most_recent_process))
+            # send a message to process task fetch the head
+            # with machine_resource.resource.request():
+            submit_process = process_schedule_blocked_queue.get()
+        if submit_process is not None:
+            machine_resource.env.process(__allocate_process_task(process=submit_process))
+
+
+def main():
     random.seed(42)
-    env = simpy.Environment()
+    env: simpy.Environment = simpy.Environment()
     machine_number = int(input("please input the number of available machine: ").strip())
     _generate_machine_resource(env=env, num_machine=machine_number)
     processes_list: typing.List[typing.List[Process]] = _load_hierarchical_process_list()
-    _pop_process(hierarchical_processes=processes_list)
+    machine_resource.env.process(pop_process(hierarchical_processes=processes_list))
+    machine_resource.env.run(until=90)
+
+
+main()
 
 # # Define processes
 # processes_fcfs = [
