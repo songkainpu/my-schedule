@@ -1,5 +1,6 @@
 import queue
 import random
+import sys
 import threading
 import time
 import traceback
@@ -62,6 +63,8 @@ class PriorityBlockingQueue(queue.PriorityQueue):
         """
         super().__init__()
         self.condition = threading.Condition()
+    # to solve the problem than when using tuple as element and the first priority items are the same,
+    # then the queue will compare the second element(Process), which do not support compare
 
     @overrides
     def put(self, item: typing.Tuple[typing.Any, typing.Any], block=True, timeout=None):
@@ -71,8 +74,11 @@ class PriorityBlockingQueue(queue.PriorityQueue):
         :param item must be a tuple where the first element is sorted key, and the second is data
         """
         with self.condition:
-            super().put((priority, item))
+            print(f"item：{item}")
+            # q.put(Task('Medium priority task', 3), priority=partial(lambda task: task.priority))
+            super().put(item, block=block, timeout=timeout)
             self.condition.notify()
+
 
     @overrides
     def get(self, block=True, timeout=None):
@@ -84,7 +90,7 @@ class PriorityBlockingQueue(queue.PriorityQueue):
         with self.condition:
             while self.empty():
                 self.condition.wait()
-            _, item = super().get()
+            _, item = super().get(block=block, timeout=timeout)
             return item if not isinstance(item, tuple) else item[1]
 
     def get_no_delete(self):
@@ -123,10 +129,16 @@ class Process:
         self.service_time = service_time
         self.priority = priority
 
+    def __lt__(self, other):
+        return True
+
+    def __eq__(self, other):
+        return False
+
     def get_sort_key(self) -> str:
         if not self.priority or not self.arrival_time:
             raise ValueError(f"Invalid priority, and arrive_time: Process{Process}")
-        return f"{format(self.priority.value, '032b')}-{format(self.arrival_time, '032b')}"
+        return f"{format(self.priority.value[0], '032b')}-{format(self.arrival_time, '032b')}"
 
 
 def _check_is_validate_process(process: Process, machine_no: int) -> bool:
@@ -175,9 +187,8 @@ class Machine(object):
             process.arrival_time = machine_resource.env.now
             if not _check_is_validate_process(process=runnable_process, machine_no=self.machine_no):
                 return
-
-
-
+            with lock:
+                process_schedule_blocked_queue.put(item=(process.arrival_time, process))
 
 
 class MachineResource(object):
@@ -217,7 +228,7 @@ def _generate_machine_resource(env: simpy.Environment, num_machine: int = 1) -> 
     return False
 
 
-process_schedule_blocked_queue: PriorityBlockingQueue[Process] = PriorityBlockingQueue()
+process_schedule_blocked_queue: typing.Optional[PriorityBlockingQueue[Process]] = None
 lock = threading.Lock()
 # singleton
 machine_resource: typing.Union[None, MachineResource] = None
@@ -242,7 +253,7 @@ def _convert_list_to_priority_blocking_queue_sorted_by_arr_time(data: typing.Ite
         PriorityBlockingQueue[Process]:
     pq: PriorityBlockingQueue[Process] = PriorityBlockingQueue()
     for process in data:
-        pq.put(item=(process.service_time, process))
+        pq.put(item=(process.arrival_time, process))
     return pq
 
 
@@ -268,7 +279,7 @@ EXAMPLE_HIGH_PRIORITY_PROCESS: typing.List[Process] = [Process("high-priority-pr
 
 
 def _load_hierarchical_process_list(is_default: bool = True, level: int = 3, process_number: int = 1000) \
-        -> typing.List[PriorityBlockingQueue[Process]]:
+        -> PriorityBlockingQueue[Process]:
     """
     load hierarchical process list
     :param is_default: is to return the default examoles <a href="https://canvas.nus.edu.sg/courses/53202/files/folder/2_CA_Assignments?preview=3407585" />
@@ -277,13 +288,13 @@ def _load_hierarchical_process_list(is_default: bool = True, level: int = 3, pro
     :return:
     """
     if is_default:
-        return [_convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_LOW_PRIORITY_PROCESS),
-                _convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_MIDDLE_PRIORITY_PROCESS),
-                _convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_HIGH_PRIORITY_PROCESS)]
+        return _convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_LOW_PRIORITY_PROCESS
+                                                                                + EXAMPLE_MIDDLE_PRIORITY_PROCESS
+                                                                                + EXAMPLE_HIGH_PRIORITY_PROCESS)
+    return _convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_LOW_PRIORITY_PROCESS
+                                                                            + EXAMPLE_MIDDLE_PRIORITY_PROCESS
+                                                                            + EXAMPLE_HIGH_PRIORITY_PROCESS)
     # TODO: implement the random generate
-    return [_convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_LOW_PRIORITY_PROCESS),
-            _convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_MIDDLE_PRIORITY_PROCESS),
-            _convert_list_to_priority_blocking_queue_sorted_by_arr_time(data=EXAMPLE_HIGH_PRIORITY_PROCESS)]
 
 
 def fcfs(env, processes):
@@ -294,33 +305,32 @@ def fcfs(env, processes):
         print(f"Time {env.now}: Process {process.name} finishes")
 
 
-def priority(env, processes):
-    sorted_processes = sorted(processes, key=lambda x: x.priority)
-    for process in sorted_processes:
-        yield env.timeout(process.arrival_time)
-        print(f"Time {env.now}: Process {process.name} with priority {process.priority} starts")
-        yield env.timeout(process.service_time)
-        print(f"Time {env.now}: Process {process.name} finishes")
+# def priority(env, processes):
+#     sorted_processes = sorted(processes, key=lambda x: x.priority)
+#     for process in sorted_processes:
+#         yield env.timeout(process.arrival_time)
+#         print(f"Time {env.now}: Process {process.name} with priority {process.priority} starts")
+#         yield env.timeout(process.service_time)
+#         print(f"Time {env.now}: Process {process.name} finishes")
 
 
-def __check_is_remaining_process(hierarchical_processes: typing.List[PriorityBlockingQueue[Process]]) -> bool:
+def __check_is_remaining_process(hierarchical_processes: PriorityBlockingQueue[Process]) -> bool:
     """
     check is there a proces in hierarchical_processes
     :param hierarchical_processes:
     :return: {@code True} there is at least a process
     {@code False} Otherwise
     """
-    if not hierarchical_processes or len(hierarchical_processes) == 0:
-        return False
-    for process_list in hierarchical_processes:
-        if process_list is not None and len(process_list) > 0:
-            return True
-    # read without lock
-    # TODO: make sure add to the dict then delete from hierarchical_processes
-    for key, value in processing_task_dict:
-        if value is not None and len(value) > 0:
-            return True
+    # print(f"hierarchical_processes.empty():{hierarchical_processes.empty()}")
+    if hierarchical_processes and not hierarchical_processes.empty():
+        return True
     return False
+    # read without lock
+    # # TODO: make sure add to the dict then delete from hierarchical_processes
+    # for key, value in processing_task_dict:
+    #     if value is not None and len(value) > 0:
+    #         return True
+    # return False
 
 
 def __allocate_process_task(process: Process):
@@ -333,6 +343,7 @@ def __allocate_process_task(process: Process):
             try:
                 cur_machine: Machine = machine_resource.get_machine(machine_no=cur_machine_no)
                 # TODO: use gevent in __allocate_process_task function
+                print(f"start to process task :{process}")
                 machine_resource.env.process(cur_machine.add_runnable_process(process=process))
             except Exception as e:
                 traceback.print_exception(e)
@@ -363,37 +374,28 @@ def _compute_actual_processing_time(expected_time: float, r: float = None) -> fl
 
 # def _process_input() -> typing.Tuple(int, int, int):
 
-def pop_process(hierarchical_processes: typing.List[PriorityBlockingQueue[Process]]):
+def pop_process(hierarchical_processes: PriorityBlockingQueue[Process]):
     print(f"enter into pop process func")
     # record the time when submit previous process
     pre_arrive_time: int = 0
     while __check_is_remaining_process(hierarchical_processes):
         # pop the miniOne
-        process_list_with_recent_process = hierarchical_processes[0]
-        most_recent_process = None
-        for process_list in hierarchical_processes:
-            # processing_map has to be at least three type low middle hight
-            cur_head: Process = process_list.get_no_delete()
-            if most_recent_process is None or cur_head.arrival_time < most_recent_process.arrival_time:
-                most_recent_process = cur_head
-                process_list_with_recent_process = process_list
-        if most_recent_process is not None:
-            process_list_with_recent_process.get()
-        else:
-            if not __check_is_remaining_process(hierarchical_processes):
-                # now check all elements in hierarchical arrays and progressing map
-                time.sleep(SELF_ROTATE_TIME)
+        most_recent_process: typing.Union[None, Process] = None
+        try:
+            most_recent_process = hierarchical_processes.get(timeout=1)
+        except Exception as e:
+            traceback.print_exception(e)
+        if most_recent_process is None:
+            time.sleep(SELF_ROTATE_TIME)
             continue
         print(f"most_recent_process:{most_recent_process.__dict__}")
         # use pysim to add the process into system
         yield machine_resource.env.timeout(most_recent_process.arrival_time - pre_arrive_time)
         pre_arrive_time = most_recent_process.arrival_time
-        submit_process: typing.Union[None, Process] = None
+        submit_process: typing.Optional[Process] = None
         with lock:
-            # process_schedule_blocked_queue.put(item=(most_recent_process.get_sort_key(), most_recent_process))
-            # send a message to process task fetch the head
-            # with machine_resource.resource.request():
             submit_process = process_schedule_blocked_queue.get()
+        if submit_process is not None:
             gevent.spawn(_submit_process_into_machine, **{
                 "submit_process": submit_process
             })
@@ -420,32 +422,11 @@ def main():
     env: simpy.Environment = simpy.Environment()
     machine_number = int(input("please input the number of available machine: ").strip())
     _generate_machine_resource(env=env, num_machine=machine_number)
-    processes_list: typing.List[PriorityBlockingQueue[Process]] = _load_hierarchical_process_list()
-    machine_resource.env.process(pop_process(hierarchical_processes=processes_list))
-    machine_resource.env.run(until=90)
+    processes_list: PriorityBlockingQueue[Process] = _load_hierarchical_process_list()
+    global process_schedule_blocked_queue
+    process_schedule_blocked_queue = processes_list
+    machine_resource.env.process(pop_process(hierarchical_processes=process_schedule_blocked_queue))
+    machine_resource.env.run(until=sys.maxsize)
 
 
 main()
-
-# # Define processes
-# processes_fcfs = [
-#     Process("P1", arrival_time=0, service_time=3),
-#     Process("P2", arrival_time=1, service_time=2),
-#     Process("P3", arrival_time=2, service_time=1)
-# ]
-#
-# processes_priority = [
-#     Process("P1", arrival_time=0, service_time=3, priority=3),
-#     Process("P2", arrival_time=1, service_time=2, priority=2),
-#     Process("P3", arrival_time=2, service_time=1, priority=1)
-# ]
-#
-# # Run FCFS
-# print("First-Come, First-Served (FCFS):")
-# env.process(fcfs(env, processes_fcfs))
-# env.run()
-#
-# # Run Priority scheduling
-# print("\nPriority Scheduling:")
-# env.process(priority(env, processes_priority))
-# env.run()
