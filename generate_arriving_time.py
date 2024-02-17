@@ -1,25 +1,46 @@
-import random
+import typing
 
+import numpy
+from data_model import Process, TaskType
 
-def generate_arrival_times(num_tasks, arrival_rate):
-    arrival_times = []
-    time = 0
-    for _ in range(num_tasks):
-        # 生成指数分布的随机数，代表到达时间间隔
-        interval = random.expovariate(arrival_rate)
-        time += interval
-        arrival_times.append(time)
+def _generate_arrival_times(num_tasks: int, average_rate: int = 10) -> typing.Iterable[typing.Union[int, float]]:
+    numpy.random.seed(42)
+
+    arrival_times = numpy.random.poisson(average_rate, num_tasks)
+
+    print(arrival_times)
     return arrival_times
 
 
-# 定义任务数量和到达率
-num_tasks = 1000
-arrival_rate = 0.1  # 到达率，即单位时间内平均到达的任务数量
+def generate_process_list(num_tasks: int,
+                          rate_map=None) -> typing.List[Process]:
+    if rate_map is None:
+        rate_map = {TaskType.LOW.name: 1, TaskType.MIDDLE.name: 1, TaskType.HIGH.name: 1}
+    arrive_time_list: typing.Iterable[typing.Union[int, float]] = _generate_arrival_times(num_tasks=num_tasks)
+    process_list: typing.List[Process] = []
+    cur_type = TaskType.LOW
+    cur_count = rate_map.get(cur_type.name)
+    total_count = 0
+    for arrive_time in arrive_time_list:
+        while cur_count == 0:
+            cur_type = _get_next_type(cur_type=cur_type)
+            cur_count = rate_map.get(cur_type.name)
+        process_list.append(Process(name=f"priority-{cur_type.name}-{total_count}",
+                                    arrival_time=arrive_time,
+                                    service_time=1,
+                                    priority=cur_type))
+        total_count += 1
+        cur_count -= 1
+        # process_list.append(Process(name=))
+    for p in process_list:
+        print(f"process:{p.__dict__}")
+    return process_list
 
-# 生成一批任务的到达时间
-arrival_times = generate_arrival_times(num_tasks, arrival_rate)
 
-# 打印任务到达时间
-print(arrival_times)
-for arr_time in arrival_times:
-
+def _get_next_type(cur_type: TaskType):
+    if TaskType.LOW == cur_type:
+        return TaskType.MIDDLE
+    if TaskType.MIDDLE == cur_type:
+        return TaskType.HIGH
+    else:
+        return TaskType.LOW
