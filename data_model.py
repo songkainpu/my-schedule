@@ -20,9 +20,9 @@ class ScheduleInfo(Base):
 
 
 class TaskType(Enum):
-    LOW = (1 << 31, [1, 4, 6, 3, 9], [10, 15, 20, 5, 10])
+    LOW = (1 << 1, [1, 4, 6, 3, 9], [10, 15, 20, 5, 10])
     MIDDLE = (1 << 16, [2, 5, 7, 9, 6, 10], [12, 8, 18, 10, 22, 15])
-    HIGH = (1, [3, 8, 1, 7, 5, 11], [9, 11, 10, 14, 7, 12])
+    HIGH = (1 << 21, [3, 8, 1, 7, 5, 11], [9, 11, 10, 14, 7, 12])
     DEFAULT = LOW
 
     def __init__(self, priority: int, machine_sequence: typing.List[int], process_time_list: typing.List[int]):
@@ -74,7 +74,7 @@ class Process:
     def get_sort_key(self) -> str:
         if not self.priority or not self.arrival_time:
             raise ValueError(f"Invalid priority, and arrive_time: Process{Process}")
-        return f"{format(self.priority.value[0], '032b')}-{format(int(self.arrival_time), '032b')}"
+        return f"{format(self.priority.value[0], '032b')}-{format(int(self.arrival_time), '032b')}-{self.arrival_time - int(self.arrival_time) if isinstance(self.arrival_time, float) else 0.}"
 
     def get_arrive_time_priority_sort_key(self) -> str:
         if not self.priority or not self.arrival_time:
