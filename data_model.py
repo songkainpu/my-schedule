@@ -16,6 +16,7 @@ class ScheduleInfo(Base):
     waiting_time = Column(Float)
     actual_execute_time = Column(Float)
     origin_execute_time = Column(Float)
+    machine_no = Column(Integer)
 
 
 class TaskType(Enum):

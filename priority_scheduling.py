@@ -81,6 +81,7 @@ def _check_is_validate_process(process: Process, machine_no: int) -> bool:
 def execute_process_mock(process: Process) -> typing.Generator:
     if process.stage >= len(process.priority.process_time_list):
         return
+    machine_no = process.priority.machine_sequence[process.stage]
     cur_stage = process.stage
     next_stage = cur_stage + 1
     process.stage = next_stage
@@ -98,8 +99,12 @@ def execute_process_mock(process: Process) -> typing.Generator:
                                                priority=process.priority.name,
                                                waiting_time=waiting_time,
                                                actual_execute_time=actual_process_time,
-                                               origin_execute_time=origin_process_time)
-    __save_schedule_info(schedule_info=schedule_info)
+                                               origin_execute_time=origin_process_time,
+                                               machine_no=machine_no)
+    gevent.spawn(__save_schedule_info,**{
+        "schedule_info": schedule_info
+    }).run()
+    # __save_schedule_info(schedule_info=schedule_info)
     with lock:
         print(f"runnable_process.stage:{process.stage}")
         if process.stage < len(process.priority.process_time_list):
@@ -157,7 +162,7 @@ class MachineResource(object):
         self.resource_map: typing.Dict[int, Machine] = {}
         min_machine_no, max_machine_no = TaskType.get_min_and_max_machine_no()
         for i in range(min_machine_no, max_machine_no + 1):
-            self.resource_map[i] = Machine(resource=simpy.Resource(env, 2), machine_no=i)
+            self.resource_map[i] = Machine(resource=simpy.Resource(env, num_machine), machine_no=i)
 
     def get_machine(self, machine_no: typing.Union[int, str]) -> Machine:
         """
@@ -337,9 +342,10 @@ def pop_process(hierarchical_processes: PriorityBlockingQueue[Process]):
         yield machine_resource.env.timeout(max(most_recent_process.arrival_time - machine_resource.env.now, 0))
         pre_arrive_time = most_recent_process.arrival_time
         if most_recent_process is not None:
-            gevent.spawn(_submit_process_into_machine, **{
-                "submit_process": most_recent_process
-            }).run()
+            _submit_process_into_machine(submit_process=most_recent_process)
+            # gevent.spawn(_submit_process_into_machine, **{
+            #     "submit_process": most_recent_process
+            # }).run()
 
 
 def _submit_process_into_machine(submit_process: Process):
